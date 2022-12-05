@@ -27,10 +27,10 @@ int main()
     init_platform();
 
     initBRAM();
-    int x_status;
+    //initKF();
 	kf_config = XKalmanfilterkernel_LookupConfig(XPAR_KALMANFILTERKERNEL_0_DEVICE_ID);
-	x_status = XKalmanfilterkernel_CfgInitialize(&kf_kernel, kf_config);
-	x_status = XKalmanfilterkernel_Initialize(&kf_kernel, XPAR_KALMANFILTERKERNEL_0_DEVICE_ID);
+	int status = XKalmanfilterkernel_CfgInitialize(&kf_kernel, kf_config);
+	status = XKalmanfilterkernel_Initialize(&kf_kernel, XPAR_KALMANFILTERKERNEL_0_DEVICE_ID);
 	XKalmanfilterkernel_Set_q(&kf_kernel, q);
 	XKalmanfilterkernel_Set_r(&kf_kernel, r);
 	for (int i = 0; i < 300; ++i) {
@@ -72,6 +72,22 @@ int main()
 	xil_printf("Finished\n\r");
     cleanup_platform();
     return 0;
+}
+int initKF(){
+    int Status;
+	kf_config = XKalmanfilterkernel_LookupConfig(XPAR_KALMANFILTERKERNEL_0_DEVICE_ID);
+	if (kf_config == (XKalmanfilterkernel_Config*) NULL) {
+		return XST_FAILURE;
+	}
+	Status = XKalmanfilterkernel_CfgInitialize(&kf_kernel, kf_config);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+	Status = XKalmanfilterkernel_Initialize(&kf_kernel, XPAR_KALMANFILTERKERNEL_0_DEVICE_ID);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+
 }
 
 int initBRAM()

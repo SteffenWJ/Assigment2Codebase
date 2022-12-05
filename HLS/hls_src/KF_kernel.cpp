@@ -1,25 +1,29 @@
 #include "KF_kernel.h"
 
-void KalmanFilterKernel(float din[6], float dout[6], float q, float r) {
+void KalmanFilterKernel(float din[6], float dout[6], float q, float r , ap_uint<32> clockLow) {
 
 #pragma HLS INTERFACE ap_memory storage_type=ram_1p port=din
 #pragma HLS INTERFACE ap_memory storage_type=ram_1p port=dout
 #pragma HLS INTERFACE s_axilite port=q bundle=AXI_CPU
 #pragma HLS INTERFACE s_axilite port=r bundle=AXI_CPU
 #pragma HLS INTERFACE s_axilite port=return bundle=AXI_CPU
-//#pragma HLS INTERFACE ap_none   port=clockLow
+#pragma HLS INTERFACE ap_none   port=clockLow
 
 		KF_data_t din_[6];
 		KF_data_t dout_[6];
-
+		static KF_data_t clockOld = 0;
+		KF_data_t deltaT = (KF_data_t)((clockLow-clockOld)/10); //It is devided by 10 a to change the
+//		if (deltaT == 0) { //This was also added for testing the filter
+//			deltaT = 0.1;
+//		}
+		clockOld = (KF_data_t)clockLow;
 		//read in all state variables at din
 		for (int i = 0; i < (6); i++) {
 #pragma HLS pipeline off
-#pragma HLS LOOP_TRIPCOUNT max=1
-			din_[i] = (KF_data_t)din[i];	//measurement then control
+//#pragma HLS UNROLL
+			din_[i] = (KF_data_t)din[i];
 		}
-
-		// Initialization: (const for now)
+		clockOld = clockLow;
 		static KF_data_t Q[36] = {
 				q, 0, 0, 0, 0, 0,
 				0, q, 0, 0, 0, 0,
@@ -33,7 +37,7 @@ void KalmanFilterKernel(float din[6], float dout[6], float q, float r) {
 				0, r, 0,
 				0, 0, r
 		};
-		//init prediction
+		//This is where the orginal prediction step was
 		static KF_data_t x_hat[N_STATE_VARS] = { din_[0], din_[1], din_[2], 0, 0, 0 };
 		//static KF_data_t x_hat[6] = { din[0], din[1], din[2], 0, 0, 0 };
 		//init P estimation
@@ -46,20 +50,20 @@ void KalmanFilterKernel(float din[6], float dout[6], float q, float r) {
 				0, 0, 0, 0, 0, 1
 		};
 		KF_data_t A[36] = {
-				1,0,0,DT,0,0,
-				0,1,0,0,DT,0,
-				0,0,1,0,0,DT,
+				1,0,0,deltaT,0,0,
+				0,1,0,0,deltaT,0,
+				0,0,1,0,0,deltaT,
 				0,0,0,1,0,0,
 				0,0,0,0,1,0,
 				0,0,0,0,0,1
 		};
 		KF_data_t B[18] = {
-				0.5*DT*DT,0,0,
-				0,0.5*DT*DT,0,
-				0,0,0.5*DT*DT,
-				DT,0,0,
-				0,DT,0,
-				0,0,DT
+				0.5*deltaT*deltaT,0,0,
+				0,0.5*deltaT*deltaT,0,
+				0,0,0.5*deltaT*deltaT,
+				deltaT,0,0,
+				0,deltaT,0,
+				0,0,deltaT
 		};
 		KF_data_t H[18] = {
 				1,0,0,0,0,0,
@@ -97,29 +101,30 @@ void KalmanFilterKernel(float din[6], float dout[6], float q, float r) {
 		//read current measurements (t+1)
 		//for (int j = 0; j < N_MEAS_VARS; j++) z[j] = (din_[j]);
 //		for (int j = 0; j < 3; j++){
-//#pragma HLS pipeline off
-//#pragma HLS LOOP_TRIPCOUNT max=3
+#pragma HLS pipeline off
+#pragma HLS LOOP_TRIPCOUNT max=3
 //			z[j] = (din[j]);
 //		}
 		for (int j = 0; j < 3; j++){
 #pragma HLS pipeline off
+//#pragma HLS UNROLL
 #pragma HLS LOOP_TRIPCOUNT max=3
 			z[j] = (din_[j]);
 		}
 		//set state variables according to previous estimate (t)
 		for (int j = 0; j < 6; j++){
 #pragma HLS pipeline off
-#pragma HLS LOOP_TRIPCOUNT max=6
+//#pragma HLS UNROLL
+#pragma HLS LOOP_TRIPCOUNT max=3
 			x[j] = x_hat[j];
 		}
 		//set Predict matrix according to previous estimate (t)
 		for (int j = 0; j < 36; j++){
 #pragma HLS pipeline off
+//#pragma HLS UNROLL
 #pragma HLS LOOP_TRIPCOUNT max=36
 			P[j] = P_hat[j];
 		}
-
-		//x_(t+1) = A * xhat+(t) + B * u
 		// Predict step
 		matMultiply<KF_data_t, 6, 6, 6>(A, x, tmp_mat_1, 6, 6, 1);
 		matMultiply<KF_data_t, N_STATE_VARS, N_STATE_VARS, N_STATE_VARS>(B, u, tmp_mat_2, N_STATE_VARS, N_CTRL_VARS, 1);
@@ -130,27 +135,22 @@ void KalmanFilterKernel(float din[6], float dout[6], float q, float r) {
 		matMultiply<KF_data_t, N_STATE_VARS, N_STATE_VARS, N_STATE_VARS>(tmp_mat_1, tmp_mat_2, tmp_mat_3, N_STATE_VARS, N_STATE_VARS, N_STATE_VARS);
 		matAdd<KF_data_t, N_STATE_VARS, N_STATE_VARS>(tmp_mat_3, Q, P_minus, N_STATE_VARS, N_STATE_VARS);
 
-		//read control values for next prediction u
-		//for (int j = 0; j < N_CTRL_VARS; j++) u[j] = (din_[N_MEAS_VARS+j]);
-//		for (int j = 0; j < N_CTRL_VARS; j++){
-//#pragma HLS pipeline off
-//#pragma HLS LOOP_TRIPCOUNT max=3
-//			u[j] = (din[N_MEAS_VARS+j]);
-//		}
 		for (int j = 0; j < N_CTRL_VARS; j++){
 #pragma HLS pipeline off
+//#pragma HLS UNROLL
 #pragma HLS LOOP_TRIPCOUNT max=3
 			u[j] = (din_[N_MEAS_VARS+j]);
 		}
-		//idk what this is for ?? -> overwritten anyway
 
 		for (int j = 0; j < N_STATE_VARS; j++){
 #pragma HLS pipeline off
+//#pragma HLS UNROLL
 #pragma HLS LOOP_TRIPCOUNT max=6
 			x_plus[j] = x_minus[j];
 		}
 		for (int j = 0; j < N_STATE_VARS*N_STATE_VARS; j++){
 #pragma HLS pipeline off
+//#pragma HLS UNROLL
 #pragma HLS LOOP_TRIPCOUNT max=36
 			P_plus[j] = P_minus[j];
 		}
@@ -185,33 +185,30 @@ void KalmanFilterKernel(float din[6], float dout[6], float q, float r) {
 		// Write data
 		for (int j = 0; j < 6; j++){
 #pragma HLS pipeline off
+//#pragma HLS UNROLL
 #pragma HLS LOOP_TRIPCOUNT max=6
 			x_hat[j] = x_plus[j];
 		}
 		for (int j = 0; j < 36; j++){
 #pragma HLS pipeline off
+//#pragma HLS UNROLL
 #pragma HLS LOOP_TRIPCOUNT max=36
 			P_hat[j] = P_plus[j];
 		}
 		for (int j = 0; j < 6; j++){
 #pragma HLS pipeline off
+//#pragma HLS UNROLL
 #pragma HLS LOOP_TRIPCOUNT max=6
 			dout_[j] = x_plus[j];
 		}
 
 
 		for (int i = 0; i < 6; i++) {
-#pragma HLS UNROLL FACTOR=6
-#pragma HLS LOOP_TRIPCOUNT min=6 max=6
+#pragma HLS pipeline off
+//#pragma HLS UNROLL
+#pragma HLS LOOP_TRIPCOUNT max=6
 			dout[i] = (float)dout_[i];
 		}
-//		for (int i = 0; i < 6; i++) {
-//#pragma HLS pipeline off
-//#pragma HLS LOOP_TRIPCOUNT max=6
-//			dout[i] = (float)x_plus[i];
-			//dout[i] = (float)2;
-//		}
-
 }
 
 
